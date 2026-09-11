@@ -128,13 +128,16 @@ def sanitize(name):
 
 _CN = ['零','一','二','三','四','五','六','七','八','九']
 def cn_ordinal(n):
-    if n <= 10:
+    if n < 10:
         return _CN[n]
+    if n == 10:
+        return '十'
     if n < 20:
         return '十' + _CN[n - 10]
-    if n < 30:
-        return '二十' + ('' if n == 20 else _CN[n - 20])
-    return '三十' if n == 30 else str(n)
+    if n < 100:
+        t, o = divmod(n, 10)
+        return _CN[t] + '十' + ('' if o == 0 else _CN[o])
+    return str(n)
 
 def cat_title(c):
     return f'{BOOK_TITLE} · 第{cn_ordinal(c["i"])}篇 {c["text"]}'
