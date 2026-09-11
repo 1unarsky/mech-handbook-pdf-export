@@ -326,6 +326,10 @@ async function cmdRender() {
   if (!cats || !chain) throw new Error('请先运行 cats 与 enumerate');
   const only = hasArg('--cat') ? [parseInt(argVal('--cat'), 10)] : null;
   const workers = parseInt(argVal('--workers', '6'), 10);
+  const force = hasArg('--force');
+  const rangeArg = argVal('--range', null); // 形如 499-598 (按全局 gi)
+  let range = null;
+  if (rangeArg) { const [a, b] = rangeArg.split('-').map(Number); range = [a, b === undefined ? a : b]; }
   ensureDir(PAGES);
   const records = chain.records.filter(r => !only || only.includes(r.catI));
   if (only) console.log(`渲染范围: ${records.length} 条 (仅这些篇)`);
@@ -333,13 +337,14 @@ async function cmdRender() {
 
   const pad = n => String(n).padStart(5, '0');
   const need = [];
-  records.forEach((r, k) => {
+  records.forEach(r => {
     const gi = chain.records.indexOf(r);
+    if (range && (gi < range[0] || gi > range[1])) return;
     const fp = path.join(PAGES, pad(gi) + '.pdf');
     const st = fs.existsSync(fp) ? fs.statSync(fp).size : 0;
-    if (!st) need.push({ gi, rec: r });
+    if (force || !st) need.push({ gi, rec: r });
   });
-  console.log(`已有 ${records.length - need.length}/${records.length}, 待渲染 ${need.length}`);
+  console.log(`待渲染 ${need.length}${force ? ' (--force 全部重渲)' : ''}`);
   if (need.length === 0) { console.log('无需渲染。'); return; }
 
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
@@ -353,24 +358,51 @@ async function cmdRender() {
       const page = await ctx.newPage();
       try {
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await page.waitForTimeout(500);
+        await page.waitForTimeout(400);
         await page.addStyleTag({ content: FIX_CSS });
-        for (let k = 0; k < 30; k++) {
+        // 1) 强制所有图片立即加载(含懒加载), 2) 逐步滚动触发, 3) 等待真正解码完成
+        await page.evaluate(() => {
+          const el = document.getElementById('HtmContent');
+          if (!el) return;
+          el.querySelectorAll('img').forEach(im => {
+            try {
+              im.loading = 'eager';
+              if (!im.getAttribute('src') && im.dataset && im.dataset.src) im.src = im.dataset.src;
+              if (im.dataset && im.dataset.original) im.src = im.dataset.original;
+            } catch (e) {}
+          });
+        });
+        await page.evaluate(async () => {
+          const h = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+          for (let y = 0; y < h; y += 700) { window.scrollTo(0, y); await new Promise(r => setTimeout(r, 100)); }
+          window.scrollTo(0, 0);
+        });
+        let settled = false, broken = 0, total = 0;
+        for (let k = 0; k < 60; k++) {
           const meta = await page.evaluate(() => {
             const el = document.getElementById('HtmContent');
             const imgs = el ? [...el.getElementsByTagName('img')] : [];
             return {
               textLen: el ? (el.innerText || '').replace(/\s/g, '').length : 0,
+              total: imgs.length,
               loading: imgs.filter(im => !im.complete).length,
+              broken: imgs.filter(im => im.complete && im.naturalWidth === 0).length,
             };
           }).catch(() => null);
-          if (meta && meta.textLen > 0 && meta.loading === 0) break;
+          if (meta && meta.textLen > 0 && meta.loading === 0) { settled = true; broken = meta.broken; total = meta.total; break; }
           await page.waitForTimeout(250);
+        }
+        // 若有图片损坏/未取到, 重试一次该页(最多到第3次尝试)
+        if (settled && broken > 0 && attempt < 3) {
+          await page.close().catch(() => {});
+          lastErr = new Error(`图片未就绪 ${broken}/${total}`);
+          await wait(1200 * attempt);
+          continue;
         }
         const fp = path.join(PAGES, pad(gi) + '.pdf');
         await page.pdf({ path: fp, format: 'A4', printBackground: true, margin: { top: '6mm', bottom: '6mm', left: '4mm', right: '4mm' } });
         await page.close().catch(() => {});
-        return { gi, ok: true };
+        return { gi, ok: true, imgs: total, broken };
       } catch (e) {
         await page.close().catch(() => {});
         lastErr = e;
@@ -382,21 +414,24 @@ async function cmdRender() {
 
   let idx = 0;
   const failed = [];
+  const withBroken = [];
   async function worker() {
     for (;;) {
       const job = need[idx++];
       if (!job) break;
       const r = await renderOne(job);
       if (!r.ok) failed.push(r);
+      else if (r.broken > 0) withBroken.push(r);
       const done = Math.min(idx, need.length);
       if (done % 20 === 0 || done === need.length) {
-        console.log(`  render ${done}/${need.length} fail=${failed.length} gi=${r.gi}`);
+        console.log(`  render ${done}/${need.length} fail=${failed.length} brokenPages=${withBroken.length} gi=${r.gi}`);
       }
     }
   }
   await Promise.all(Array.from({ length: Math.min(workers, need.length) }, worker));
   await browser.close().catch(() => {});
-  console.log('渲染结束: 成功', need.length - failed.length, '失败', failed.length);
+  console.log('渲染结束: 成功', need.length - failed.length, '失败', failed.length, '含损坏图片页', withBroken.length);
+  if (withBroken.length) console.log('  含损坏图片的页:', JSON.stringify(withBroken.map(x => ({ gi: x.gi, broken: x.broken, imgs: x.imgs }))));
   if (failed.length) {
     fs.writeFileSync(path.join(DATA, 'render-failed.json'), JSON.stringify(failed, null, 0), 'utf8');
     console.log('失败列表 -> data/render-failed.json (重跑 render 会自动续试)');
