@@ -164,24 +164,24 @@ async function cmdEnumerate() {
   const cats = readJSON(CATS_FILE);
   if (!cats) throw new Error('请先运行: node tools/mdtool.js cats');
   const only = hasArg('--cat') ? [parseInt(argVal('--cat'), 10)] : null;
-  const parts = [];
   for (const c of cats) {
-    if (only && !only.includes(c.i)) { parts.push({ i: c.i, skip: true }); continue; }
-    parts.push({ i: c.i, ...(await enumerateOneCat(c)) });
+    if (only && !only.includes(c.i)) continue; // 未指定的篇保持其已有缓存不动
+    await enumerateOneCat(c);
   }
-  // 汇总 chain.json(全局顺序)
+  // 汇总 chain.json: 收录所有"已完成"的篇(全局顺序, 可跨多次运行累积)
   const chainRecs = [];
   let okCats = 0;
+  const pending = [];
   for (const c of cats) {
-    const st = parts.find(p => p.i === c.i);
-    if (!st || st.skip) continue;
-    if (!st.done) { console.log(`!! 篇${c.i} 尚未完成遍历, 整本 chain 不完整。请重跑该篇。`); continue; }
+    const st = readJSON(await catFile(c.i));
+    if (!st || !st.done) { pending.push(c.i); continue; }
     for (const r of st.records) chainRecs.push({ catI: c.i, id: r.id, text: r.text, path: r.path, content: r.content });
     okCats++;
   }
   ensureDir(DATA);
   writeJSON(CHAIN_FILE, { cats, records: chainRecs });
-  console.log(`chain.json: ${okCats} 篇 / ${chainRecs.length} 条记录(全局顺序)`);
+  console.log(`chain.json: ${okCats}/${cats.length} 篇 / ${chainRecs.length} 条记录(全局顺序)`);
+  if (pending.length) console.log(`  尚未遍历的篇: ${pending.join(', ')}`);
 }
 
 async function enumerateOneCat(c) {
