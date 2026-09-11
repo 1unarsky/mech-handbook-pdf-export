@@ -283,6 +283,7 @@ async function cmdTree() {
     }
   }
   const nodes = [];
+  const failures = [];
   let calls = 0;
   await withPage(async page => {
     const hid = await openIndex(page);
@@ -291,7 +292,13 @@ async function cmdTree() {
       calls++;
       const num = numOf(node.id);
       if (!num) return [];
-      return childDir(page, hid, num);
+      try {
+        return await childDir(page, hid, num);
+      } catch (e) {
+        // 个别节点标题含特殊字符会导致服务端返回的脚本片段无法解析; 跳过该子树, 不中断整棵树
+        failures.push({ num, text: node.text, error: String(e.message).slice(0, 120) });
+        return [];
+      }
     }
     async function walk(node, depth, parent) {
       nodes.push({ num: numOf(node.id), text: node.text, content: node.itemcontent, depth, parent });
@@ -308,8 +315,9 @@ async function cmdTree() {
     if (!root) throw new Error('篇节点未找到');
     await walk(root, 0, null);
   });
-  writeJSON(tf, { nodes, catI: i, catText: c.text });
-  console.log(`篇${i} 「${c.text}」目录树节点: ${nodes.length} (API展开调用 ${calls})`);
+  writeJSON(tf, { nodes, catI: i, catText: c.text, failures });
+  console.log(`篇${i} 「${c.text}」目录树节点: ${nodes.length} (API展开调用 ${calls}, 跳过 ${failures.length} 个无法解析的子树)`);
+  for (const f of failures.slice(0, 8)) console.log(`   - 跳过: ${f.text} (id=${f.num}) ${f.error}`);
 }
 
 async function cmdRender() {
