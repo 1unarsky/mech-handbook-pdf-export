@@ -17,7 +17,7 @@
 #   -Combined  merge 阶段生成整本单文件
 #   -Force     强制重新抓取目录树(默认已存在则跳过)
 param(
-  [ValidateSet('check','cats','enumerate','trees','render','merge')]
+  [ValidateSet('check','cats','enumerate','trees','render','merge','cover')]
   [string]$Stage = 'check',
   [int]$Cat = 0,
   [int]$Workers = 6,
@@ -63,6 +63,7 @@ switch ($Stage) {
     Say '     可选整本单文件: ... -Stage merge -Combined'
   }
   'cats'    { Invoke-Node 'cats' }
+  'cover'   { Invoke-Node 'cover' }
   'enumerate' {
     if ($Cat -gt 0) { Invoke-Node ("enumerate --cat {0}" -f $Cat) }
     else { Invoke-Node 'enumerate' }

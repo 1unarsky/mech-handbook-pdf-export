@@ -76,7 +76,14 @@ powershell -ExecutionPolicy Bypass -File .\run.ps1 -Stage render
 并发 6 页渲染（可 `-Workers 8`）。按记录跳过已完成文件，可随时中断续跑。
 失败记录会写 `data/render-failed.json`，重跑本步骤会自动补渲（每页最多自动重试 4 次）。
 
-### 5) 合并输出 PDF（带多级书签）
+### 5) 生成封面（可选，仅一次）
+```powershell
+powershell -ExecutionPolicy Bypass -File .\run.ps1 -Stage cover
+```
+把网站首页「北京英科宇科技开发中心」那页渲染为 `data/cover.pdf`。
+整本合并(`-Combined`)会**自动**把它作为封面置顶；单篇合并如需封面加 `-Cover`（python 层参数 `--cover`）。
+
+### 6) 合并输出 PDF（带多级书签）
 ```powershell
 # 只出单篇:
 powershell -ExecutionPolicy Bypass -File .\run.ps1 -Stage merge -Cat 1
@@ -84,13 +91,13 @@ powershell -ExecutionPolicy Bypass -File .\run.ps1 -Stage merge -Cat 1
 # 逐篇全部输出(每篇一个文件, 推荐):
 powershell -ExecutionPolicy Bypass -File .\run.ps1 -Stage merge
 
-# 或整本合成一个文件(文件很大, 可能 0.5~1GB+, 请确保磁盘空间):
+# 或整本合成一个文件(自动加封面; 文件很大, 可能 0.5~1GB+, 请确保磁盘空间):
 powershell -ExecutionPolicy Bypass -File .\run.ps1 -Stage merge -Combined
 ```
 
 输出在 `out/`：
 - `机械工程师设计手册_第NN篇_<篇名>.pdf`（每篇一个，正文页 + 章/节/子节多级书签）
-- `机械工程师设计手册_全册.pdf`（仅 `-Combined` 时生成）
+- `机械工程师设计手册_全册.pdf`（仅 `-Combined` 时生成，首頁为公司封面）
 
 ---
 

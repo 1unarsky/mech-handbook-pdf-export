@@ -143,6 +143,18 @@ def cat_title(c):
     return f'{BOOK_TITLE} · 第{cn_ordinal(c["i"])}篇 {c["text"]}'
 
 # ---------------- writers ----------------
+def add_cover(writer):
+    """若存在 data/cover.pdf 则作为封面加入, 返回封面页数。"""
+    cov = os.path.join(DATA, 'cover.pdf')
+    if not os.path.exists(cov):
+        return 0
+    n = 0
+    for p in PdfReader(cov).pages:
+        writer.add_page(p)
+        n += 1
+    log(f'  封面: {n} 页 ({cov})')
+    return n
+
 def new_writer(title):
     w = PdfWriter()
     w.add_metadata({'/Title': title, '/Creator': 'opencode mdtool + pypdf'})
@@ -177,7 +189,7 @@ def finalize(writer, out):
     log('  已保存:', out)
 
 # ---------------- commands ----------------
-def merge_single(cat_i):
+def merge_single(cat_i, cover=False):
     cat = CATS[cat_i - 1]
     recs = cat_records(RECORDS, cat_i)
     if not recs:
@@ -185,25 +197,27 @@ def merge_single(cat_i):
         return
     log(f'[篇{cat_i} {cat["text"]}] 正文记录 {len(recs)} 条')
     writer = new_writer(cat_title(cat))
+    cover_n = add_cover(writer) if cover else 0
     kept_local, kept, dropped = add_pages_of_cat(writer, cat_i)
     log(f'  输出 {kept} 页, 剔除空白 {dropped}')
     first_gi = recs[0][0]
-    root_item = writer.add_outline_item(cat_title(cat), kept_local[first_gi])
-    root_num, counts, add = append_outline(writer, cat_i, lambda gi: kept_local[gi])
+    root_item = writer.add_outline_item(cat_title(cat), cover_n + kept_local[first_gi])
+    root_num, counts, add = append_outline(writer, cat_i, lambda gi: cover_n + kept_local[gi])
     add(root_num, root_item)
     log(f'  大纲条目 {counts["n"]}')
     finalize(writer, os.path.join(OUT, f'{BOOK_TITLE}_第{cat_i:02d}篇_{sanitize(cat["text"])}.pdf'))
 
-def merge_all():
+def merge_all(cover=False):
     for c in CATS:
         try:
-            merge_single(c['i'])
+            merge_single(c['i'], cover=cover)
         except SystemExit as e:
             log('  [跳过]', e)
 
 def merge_combined():
     log('生成整本单文件 ...')
     writer = new_writer(f'{BOOK_TITLE} 全册')
+    add_cover(writer)
     cat_start = {}
     kept_of = {}
     present = []
@@ -249,6 +263,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument('--cat', type=int, help='第几篇')
 ap.add_argument('--all', action='store_true', help='全部篇各自成文件')
 ap.add_argument('--combined', action='store_true', help='整本合成一个文件')
+ap.add_argument('--cover', action='store_true', help='单篇/全部篇时也加封面(整本默认自动加)')
 a = ap.parse_args()
 
 data = load_json(os.path.join(DATA, 'chain.json'))
@@ -258,8 +273,8 @@ RECORDS = data['records']
 if a.combined:
     merge_combined()
 elif a.all:
-    merge_all()
+    merge_all(cover=a.cover)
 elif a.cat:
-    merge_single(a.cat)
+    merge_single(a.cat, cover=a.cover)
 else:
     ap.print_help()

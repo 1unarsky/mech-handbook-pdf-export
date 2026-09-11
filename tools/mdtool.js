@@ -268,6 +268,34 @@ async function enumerateOneCat(c) {
   return out;
 }
 
+async function cmdCover() {
+  // 渲染首页前言(北京英科宇科技开发中心页)为 data/cover.pdf, 供合并时作为封面
+  ensureDir(DATA);
+  const out = path.join(DATA, 'cover.pdf');
+  await withPage(async page => {
+    await page.goto('http://dev.inkcad.com/ykyApp/HomePage/ManualHome.htm', { waitUntil: 'networkidle', timeout: 60000 });
+    await page.waitForTimeout(500);
+    // 去掉 Word 导出的空白 Section1(会造成首空白页) 并归零边距
+    await page.addStyleTag({ content: 'div.Section1{display:none!important} html,body{margin:0!important;padding:0!important} table{max-width:100%!important}' });
+    await page.evaluate(() => {
+      document.querySelectorAll('img').forEach(im => {
+        try { im.loading = 'eager'; if (!im.getAttribute('src') && im.dataset && im.dataset.src) im.src = im.dataset.src; } catch (e) {}
+      });
+    });
+    for (let k = 0; k < 40; k++) {
+      const m = await page.evaluate(() => {
+        const imgs = [...document.images];
+        return { loading: imgs.filter(i => !i.complete).length };
+      }).catch(() => null);
+      if (m && m.loading === 0) break;
+      await page.waitForTimeout(250);
+    }
+    await page.pdf({ path: out, format: 'A4', printBackground: true, margin: { top: '6mm', bottom: '6mm', left: '4mm', right: '4mm' } });
+  });
+  const n = (() => { try { return require('fs').readFileSync(out).length; } catch (e) { return 0; } })();
+  console.log(`封面已生成: ${out} (${Math.round(n / 1024)} KB)`);
+}
+
 async function cmdTree() {
   const cats = readJSON(CATS_FILE);
   if (!cats) throw new Error('请先运行 cats');
@@ -442,9 +470,9 @@ async function cmdRender() {
 // ---------------- dispatch ----------------
 (async () => {
   const cmd = process.argv[2];
-  const fns = { cats: cmdCats, enumerate: cmdEnumerate, tree: cmdTree, render: cmdRender, probe: cmdProbe };
+  const fns = { cats: cmdCats, enumerate: cmdEnumerate, tree: cmdTree, render: cmdRender, probe: cmdProbe, cover: cmdCover };
   if (!fns[cmd]) {
-    console.log('用法: node tools/mdtool.js <cats|probe|enumerate|tree|render> [--cat N] [--workers N]');
+    console.log('用法: node tools/mdtool.js <cats|probe|enumerate|tree|render|cover> [--cat N] [--workers N] [--force] [--range a-b]');
     process.exit(1);
   }
   try {
